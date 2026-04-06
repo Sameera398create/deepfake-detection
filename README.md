@@ -34,7 +34,7 @@ Deepfakes are AI-generated manipulated media that pose serious threats to digita
 ![Samples](results/sample_batch.png)
 
 ##  Live Demo
-[Click here to try the live demo](https://03e1105b12b671a4e8.gradio.live)
+https://samammu2908-deepfake-detection.hf.space/
 
 ##  How to Run
 1. Open `deepfake_detection.ipynb` in Google Colab
@@ -49,5 +49,4 @@ Deepfakes are AI-generated manipulated media that pose serious threats to digita
 - Grad-CAM (visualization)
 - OpenCV, Albumentations
 
-##  Author
-Sameera - [GitHub](https://github.com/Sameera398create)
+
