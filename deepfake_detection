@@ -1,1 +1,367 @@
 
+from google.colab import drive
+drive.mount('/content/drive')
+!pip install timm facenet-pytorch opencv-python-headless albumentations grad-cam -q
+
+!pip uninstall facenet-pytorch -y
+!pip install timm opencv-python-headless albumentations grad-cam -q
+
+import torch
+import timm
+import cv2
+import albumentations
+print("torch:", torch.__version__)
+print("timm:", timm.__version__)
+print("cv2:", cv2.__version__)
+print("CUDA available:", torch.cuda.is_available())
+
+import os
+os.environ['KAGGLE_USERNAME'] = 'sameera6301'
+os.environ['KAGGLE_KEY'] = 'paste_your_new_token_here'
+
+!kaggle datasets download -d xhlulu/140k-real-and-fake-faces -p /content/drive/MyDrive/deepfake/
+!unzip /content/drive/MyDrive/deepfake/140k-real-and-fake-faces.zip -d /content/drive/MyDrive/deepfake/data/
+print("Unzip complete!")
+import os
+
+# Find actual structure
+base = '/content/drive/MyDrive/deepfake/data/'
+for root, dirs, files in os.walk(base):
+    level = root.replace(base, '').count(os.sep)
+    if level < 4:  # only show first 4 levels
+        indent = ' ' * 2 * level
+        print(f'{indent}{os.path.basename(root)}/')
+import os
+
+data_root = '/content/drive/MyDrive/deepfake/data/real_vs_fake/real-vs-fake/'
+
+for split in ['train', 'valid', 'test']:
+    for label in ['real', 'fake']:
+        path = os.path.join(data_root, split, label)
+        count = len(os.listdir(path))
+        print(f"{split}/{label}: {count} images")
+!pip install timm opencv-python-headless albumentations grad-cam -q
+import torch
+import torch.nn as nn
+import timm
+from torchvision import transforms, datasets
+from torch.utils.data import DataLoader
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print("Device:", device)
+
+# Correct data root
+data_root = '/content/drive/MyDrive/deepfake/data/real_vs_fake/real-vs-fake/'
+
+# Transforms
+train_transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.RandomHorizontalFlip(p=0.5),
+    transforms.RandomRotation(10),
+    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.1),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                         std=[0.229, 0.224, 0.225])
+])
+
+val_transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                         std=[0.229, 0.224, 0.225])
+])
+
+# Load datasets
+train_dataset = datasets.ImageFolder(data_root + 'train/', transform=train_transform)
+val_dataset   = datasets.ImageFolder(data_root + 'valid/', transform=val_transform)
+test_dataset  = datasets.ImageFolder(data_root + 'test/',  transform=val_transform)
+
+# DataLoaders
+train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True,  num_workers=2)
+val_loader   = DataLoader(val_dataset,   batch_size=32, shuffle=False, num_workers=2)
+test_loader  = DataLoader(test_dataset,  batch_size=32, shuffle=False, num_workers=2)
+
+print(f"Train: {len(train_dataset)} | Val: {len(val_dataset)} | Test: {len(test_dataset)}")
+print(f"Classes: {train_dataset.classes}")
+
+# Visualize sample batch
+import matplotlib.pyplot as plt
+import os
+
+os.makedirs('/content/drive/MyDrive/deepfake/results/', exist_ok=True)
+
+images, labels = next(iter(train_loader))
+class_names = train_dataset.classes
+
+fig, axes = plt.subplots(2, 4, figsize=(12, 6))
+for i, ax in enumerate(axes.flat):
+    img = images[i].permute(1,2,0).numpy()
+    img = (img - img.min()) / (img.max() - img.min())
+    ax.imshow(img)
+    ax.set_title(class_names[labels[i]],
+                 color='red' if class_names[labels[i]]=='fake' else 'green',
+                 fontsize=12)
+    ax.axis('off')
+
+plt.suptitle('Sample Batch - Red=Fake, Green=Real', fontsize=14)
+plt.tight_layout()
+plt.savefig('/content/drive/MyDrive/deepfake/results/sample_batch.png')
+plt.show()
+print("Sample batch saved!")
+
+import timm
+import torch
+import torch.nn as nn
+
+# Squeeze-and-Excitation Attention Block
+class SEBlock(nn.Module):
+    def __init__(self, channels, reduction=16):
+        super().__init__()
+        self.se = nn.Sequential(
+            nn.Linear(channels, channels // reduction),
+            nn.ReLU(),
+            nn.Linear(channels // reduction, channels),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        scale = self.se(x)
+        return x * scale
+
+# Main Deepfake Detector Model
+class DeepfakeDetector(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.backbone = timm.create_model('efficientnet_b4',
+                                           pretrained=True,
+                                           num_classes=0)
+        num_features = self.backbone.num_features
+
+        self.classifier = nn.Sequential(
+            SEBlock(num_features),
+            nn.Dropout(0.4),
+            nn.Linear(num_features, 512),
+            nn.ReLU(),
+            nn.BatchNorm1d(512),
+            nn.Dropout(0.3),
+            nn.Linear(512, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        features = self.backbone(x)
+        output = self.classifier(features)
+        return output
+
+# Initialize model
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+model = DeepfakeDetector().to(device)
+
+total_params = sum(p.numel() for p in model.parameters())
+trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+print(f"Device: {device}")
+print(f"Total parameters: {total_params:,}")
+print(f"Trainable parameters: {trainable_params:,}")
+print("Model built successfully!")
+
+from torch.utils.data import DataLoader, Subset
+import random
+
+random.seed(42)
+train_indices = random.sample(range(len(train_dataset)), 10000)
+val_indices   = random.sample(range(len(val_dataset)),   2000)
+test_indices  = random.sample(range(len(test_dataset)),  2000)
+
+small_train = Subset(train_dataset, train_indices)
+small_val   = Subset(val_dataset,   val_indices)
+small_test  = Subset(test_dataset,  test_indices)
+
+train_loader = DataLoader(small_train, batch_size=64, shuffle=True,  num_workers=2)
+val_loader   = DataLoader(small_val,   batch_size=64, shuffle=False, num_workers=2)
+test_loader  = DataLoader(small_test,  batch_size=64, shuffle=False, num_workers=2)
+
+print(f"Train: {len(small_train)} | Val: {len(small_val)} | Test: {len(small_test)}")
+# ── Imports ──
+import torch, torch.nn as nn, timm, os, random, time
+from torchvision import transforms, datasets
+from torch.utils.data import DataLoader, Subset
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import CosineAnnealingLR
+from google.colab import drive
+drive.mount('/content/drive')
+
+# ── Device ──
+torch.cuda.empty_cache()
+device = torch.device('cuda')
+print("Device:", device)
+
+# ── Data ──
+data_root = '/content/drive/MyDrive/deepfake/data/real_vs_fake/real-vs-fake/'
+transform_train = transforms.Compose([
+    transforms.Resize((224,224)),
+    transforms.RandomHorizontalFlip(),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])
+])
+transform_val = transforms.Compose([
+    transforms.Resize((224,224)),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])
+])
+train_dataset = datasets.ImageFolder(data_root+'train/', transform=transform_train)
+val_dataset   = datasets.ImageFolder(data_root+'valid/', transform=transform_val)
+test_dataset  = datasets.ImageFolder(data_root+'test/',  transform=transform_val)
+
+random.seed(42)
+small_train = Subset(train_dataset, random.sample(range(len(train_dataset)), 10000))
+small_val   = Subset(val_dataset,   random.sample(range(len(val_dataset)),   2000))
+small_test  = Subset(test_dataset,  random.sample(range(len(test_dataset)),  2000))
+
+train_loader = DataLoader(small_train, batch_size=16, shuffle=True,  num_workers=2)
+val_loader   = DataLoader(small_val,   batch_size=16, shuffle=False, num_workers=2)
+test_loader  = DataLoader(small_test,  batch_size=16, shuffle=False, num_workers=2)
+print(f"Train:{len(small_train)} Val:{len(small_val)} Test:{len(small_test)}")
+
+# ── Model ──
+class DeepfakeDetector(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.backbone = timm.create_model('efficientnet_b0',
+                                           pretrained=True,
+                                           num_classes=0)
+        nf = self.backbone.num_features
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.3),
+            nn.Linear(nf, 256),
+            nn.ReLU(),
+            nn.Linear(256, 1),
+            nn.Sigmoid()
+        )
+    def forward(self, x):
+        return self.classifier(self.backbone(x))
+
+model = DeepfakeDetector().to(device)
+print("Model ready!")
+
+# ── Train ──
+criterion = nn.BCELoss()
+optimizer = AdamW(model.parameters(), lr=1e-4)
+scheduler = CosineAnnealingLR(optimizer, T_max=15)
+history   = {'train_acc':[], 'val_acc':[]}
+best_val  = 0.0
+
+for epoch in range(15):
+    start = time.time()
+    model.train()
+    correct, total = 0, 0
+    for imgs, labs in train_loader:
+        imgs, labs = imgs.to(device), labs.float().to(device)
+        optimizer.zero_grad()
+        out  = model(imgs).squeeze()
+        loss = criterion(out, labs)
+        loss.backward()
+        optimizer.step()
+        correct += ((out>0.5)==labs).sum().item()
+        total   += labs.size(0)
+    train_acc = correct/total
+
+    model.eval()
+    correct, total = 0, 0
+    with torch.no_grad():
+        for imgs, labs in val_loader:
+            imgs, labs = imgs.to(device), labs.float().to(device)
+            out = model(imgs).squeeze()
+            correct += ((out>0.5)==labs).sum().item()
+            total   += labs.size(0)
+    val_acc = correct/total
+    scheduler.step()
+
+    history['train_acc'].append(train_acc)
+    history['val_acc'].append(val_acc)
+    print(f"Epoch {epoch+1:02d}/15 | Train Acc: {train_acc:.4f} | Val Acc: {val_acc:.4f} | Time: {time.time()-start:.1f}s")
+
+    if val_acc > best_val:
+        best_val = val_acc
+        torch.save(model.state_dict(), '/content/drive/MyDrive/deepfake/best_model.pth')
+        print(f"  ✅ Saved! Val Acc: {val_acc:.4f}")
+
+print("Training complete!")
+
+from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+
+model.eval()
+all_preds, all_probs, all_labels = [], [], []
+
+with torch.no_grad():
+    for imgs, labs in test_loader:
+        out = model(imgs.to(device)).squeeze().cpu()
+        all_probs.extend(out.numpy())
+        all_preds.extend((out>0.5).int().numpy())
+        all_labels.extend(labs.numpy())
+
+print(classification_report(all_labels, all_preds, target_names=['fake','real']))
+print("AUC-ROC:", roc_auc_score(all_labels, all_probs))
+
+plt.figure(figsize=(6,5))
+cm = confusion_matrix(all_labels, all_preds)
+sns.heatmap(cm, annot=True, fmt='d', xticklabels=['fake','real'],
+            yticklabels=['fake','real'], cmap='Blues')
+plt.title('Confusion Matrix')
+plt.savefig('/content/drive/MyDrive/deepfake/results/confusion_matrix.png')
+plt.show()
+print("Confusion matrix saved!")
+
+plt.figure(figsize=(10,4))
+plt.plot(history['train_acc'], label='Train Acc', color='blue')
+plt.plot(history['val_acc'],   label='Val Acc',   color='orange')
+plt.title('Accuracy Curve')
+plt.xlabel('Epoch')
+plt.ylabel('Accuracy')
+plt.legend()
+plt.savefig('/content/drive/MyDrive/deepfake/results/training_curves.png')
+plt.show()
+print("Training curves saved!")
+!pip install grad-cam -q
+from pytorch_grad_cam import GradCAM
+from pytorch_grad_cam.utils.image import show_cam_on_image
+from pytorch_grad_cam.utils.model_targets import BinaryClassifierOutputTarget
+
+target_layers = [model.backbone.conv_head]
+cam = GradCAM(model=model, target_layers=target_layers)
+
+fig, axes = plt.subplots(2, 4, figsize=(16, 8))
+for i in range(4):
+    img_tensor, label = test_dataset[i]
+    input_tensor = img_tensor.unsqueeze(0).to(device)
+    grayscale_cam = cam(input_tensor=input_tensor,
+                        targets=[BinaryClassifierOutputTarget(1)])
+    rgb_img = img_tensor.permute(1,2,0).numpy()
+    rgb_img = (rgb_img - rgb_img.min()) / (rgb_img.max() - rgb_img.min())
+    visualization = show_cam_on_image(rgb_img.astype(np.float32),
+                                       grayscale_cam[0], use_rgb=True)
+    axes[0][i].imshow(rgb_img)
+    axes[0][i].set_title(f"{'Fake' if label==0 else 'Real'}")
+    axes[0][i].axis('off')
+    axes[1][i].imshow(visualization)
+    axes[1][i].set_title("Grad-CAM")
+    axes[1][i].axis('off')
+
+plt.suptitle('Grad-CAM Visualization', fontsize=14)
+plt.savefig('/content/drive/MyDrive/deepfake/results/gradcam.png')
+plt.show()
+print("Grad-CAM saved!")
+
+import os
+
+# Find your notebook file
+for root, dirs, files in os.walk('/content/drive/MyDrive'):
+    for file in files:
+        if file.endswith('.ipynb'):
+            print(os.path.join(root, file))
